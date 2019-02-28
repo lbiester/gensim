@@ -76,3 +76,8 @@ data
 *.inv
 *.js
 docs/_images/
+
+# Added by Laura #
+##################
+.python-version
+.DS_Store
