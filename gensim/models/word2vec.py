@@ -204,6 +204,7 @@ except ImportError:
                 start = max(0, pos - model.window + reduced_window)
                 for pos2, word2 in enumerate(word_vocabs[start:(pos + model.window + 1 - reduced_window)], start):
                     # don't train on the `word` itself
+                    # NOTE (lbiester): my impression here is that each pair is treated separately
                     if pos2 != pos:
                         train_sg_pair(
                             model, model.wv.index2word[word.index], word2.index, alpha, compute_loss=compute_loss
@@ -1583,7 +1584,8 @@ class Word2VecVocab(utils.SaveLoad):
         self.raw_vocab = vocab
         return total_words, corpus_count
 
-    def scan_vocab(self, sentences=None, corpus_file=None, progress_per=10000, workers=None, trim_rule=None):
+    def scan_vocab(self, sentences=None, corpus_file=None, context_iterable=None, progress_per=10000, workers=None,
+                   trim_rule=None):
         logger.info("collecting all words and their counts")
         if corpus_file:
             sentences = LineSentence(corpus_file)

@@ -137,9 +137,10 @@ class BaseAny2VecModel(utils.SaveLoad):
         """Check that the training parameters provided make sense. e.g. raise error if `epochs` not provided."""
         raise NotImplementedError()
 
-    def _check_input_data_sanity(self, data_iterable=None, corpus_file=None):
+    def _check_input_data_sanity(self, data_iterable=None, corpus_file=None, context_iterable=None):
         """Check that only one argument is None."""
-        if not (data_iterable is None) ^ (corpus_file is None):
+        if not (data_iterable is not None or corpus_file is not None or context_iterable is not None):
+            # TODO (lbiester): this might not be the best replacement
             raise ValueError("You must provide only one of singlestream or corpus_file arguments.")
 
     def _worker_loop_corpusfile(self, corpus_file, thread_id, offset, cython_vocab, progress_queue, cur_epoch=0,
@@ -178,6 +179,7 @@ class BaseAny2VecModel(utils.SaveLoad):
         progress_queue.put(None)
 
     def _worker_loop(self, job_queue, progress_queue):
+        # NOTE (lbiester): THIS IS WHERE THE ACTUAL TRAINING HAPPENS!
         """Train the model, lifting batches of data from the queue.
 
         This function will be called in parallel by multiple workers (threads or processes) to make
@@ -645,8 +647,8 @@ class BaseWordEmbeddingsModel(BaseAny2VecModel):
     def _set_train_params(self, **kwargs):
         raise NotImplementedError()
 
-    def __init__(self, sentences=None, corpus_file=None, workers=3, vector_size=100, epochs=5, callbacks=(),
-                 batch_words=10000, trim_rule=None, sg=0, alpha=0.025, window=5, seed=1, hs=0, negative=5,
+    def __init__(self, sentences=None, corpus_file=None, context_iterable=None, workers=3, vector_size=100, epochs=5,
+                 callbacks=(), batch_words=10000, trim_rule=None, sg=0, alpha=0.025, window=5, seed=1, hs=0, negative=5,
                  ns_exponent=0.75, cbow_mean=1, min_alpha=0.0001, compute_loss=False, fast_version=0, **kwargs):
         """
 
@@ -661,6 +663,8 @@ class BaseWordEmbeddingsModel(BaseAny2VecModel):
             Path to a corpus file in :class:`~gensim.models.word2vec.LineSentence` format.
             You may use this argument instead of `sentences` to get performance boost. Only one of `sentences` or
             `corpus_file` arguments need to be passed (or none of them).
+        context_iterable : iterable of context objects for sequence2vec
+            Context objects to be used for training with sequence2vec
         workers : int, optional
             Number of working threads, used for multiprocessing.
         vector_size : int, optional
@@ -749,14 +753,16 @@ class BaseWordEmbeddingsModel(BaseAny2VecModel):
                 self.neg_labels = zeros(self.negative + 1)
                 self.neg_labels[0] = 1.
 
-        if sentences is not None or corpus_file is not None:
-            self._check_input_data_sanity(data_iterable=sentences, corpus_file=corpus_file)
+        if sentences is not None or corpus_file is not None or context_iterable is not None:
+            self._check_input_data_sanity(data_iterable=sentences, corpus_file=corpus_file,
+                                          context_iterable=context_iterable)
             if corpus_file is not None and not isinstance(corpus_file, string_types):
                 raise TypeError("You must pass string as the corpus_file argument.")
             elif isinstance(sentences, GeneratorType):
                 raise TypeError("You can't pass a generator as the sentences argument. Try an iterator.")
 
-            self.build_vocab(sentences=sentences, corpus_file=corpus_file, trim_rule=trim_rule)
+            self.build_vocab(sentences=sentences, corpus_file=corpus_file, context_iterable=context_iterable,
+                             trim_rule=trim_rule)
             self.train(
                 sentences=sentences, corpus_file=corpus_file, total_examples=self.corpus_count,
                 total_words=self.corpus_total_words, epochs=self.epochs, start_alpha=self.alpha,
@@ -893,8 +899,9 @@ class BaseWordEmbeddingsModel(BaseAny2VecModel):
             self.__class__.__name__, len(self.wv.index2word), self.vector_size, self.alpha
         )
 
-    def build_vocab(self, sentences=None, corpus_file=None, update=False, progress_per=10000,
+    def build_vocab(self, sentences=None, corpus_file=None, context_iterable=None, update=False, progress_per=10000,
                     keep_raw_vocab=False, trim_rule=None, **kwargs):
+        # TODO (lbiester): add comment for context_iterable
         """Build vocabulary from a sequence of sentences (can be a once-only generator stream).
 
         Parameters
@@ -933,7 +940,8 @@ class BaseWordEmbeddingsModel(BaseAny2VecModel):
 
         """
         total_words, corpus_count = self.vocabulary.scan_vocab(
-            sentences=sentences, corpus_file=corpus_file, progress_per=progress_per, trim_rule=trim_rule)
+            sentences=sentences, corpus_file=corpus_file, context_iterable=context_iterable, progress_per=progress_per,
+            trim_rule=trim_rule)
         self.corpus_count = corpus_count
         self.corpus_total_words = total_words
         report_values = self.vocabulary.prepare_vocab(
