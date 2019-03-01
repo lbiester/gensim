@@ -15,6 +15,6 @@ contexts = [SequenceContext('dry', ['wet', 'cold', 'hair', 'air']),
             SequenceContext('tree', ['nature', 'grass', 'park', 'brown', 'leaves'])]
 
 # model = Word2Vec(sentences, min_count=1, sg=True)
-model = Sequence2Vec(contexts)
+model = Sequence2Vec(contexts, min_count=1, sg=True)
 print(model)
 

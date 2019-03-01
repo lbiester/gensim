@@ -41,6 +41,7 @@ from six import itervalues, string_types
 from gensim import matutils
 from numpy import float32 as REAL, ones, random, dtype, zeros
 from types import GeneratorType
+
 from gensim.utils import deprecated
 import warnings
 import os
@@ -178,6 +179,9 @@ class BaseAny2VecModel(utils.SaveLoad):
         progress_queue.put((examples, tally, raw_tally))
         progress_queue.put(None)
 
+    def _worker_loop_context_iterable(self, context_iterable, job_queue, progress_queue):
+        pass
+
     def _worker_loop(self, job_queue, progress_queue):
         # NOTE (lbiester): THIS IS WHERE THE ACTUAL TRAINING HAPPENS!
         """Train the model, lifting batches of data from the queue.
@@ -250,7 +254,11 @@ class BaseAny2VecModel(utils.SaveLoad):
         job_no = 0
 
         for data_idx, data in enumerate(data_iterator):
-            data_length = self._raw_word_count([data])
+            # TODO (lbiester): this is a dirty hack
+            try:
+                data_length = self._raw_word_count([data])
+            except TypeError:
+                data_length = 1
 
             # can we fit this sentence into the existing job batch?
             if batch_size + data_length <= self.batch_words:
@@ -436,6 +444,10 @@ class BaseAny2VecModel(utils.SaveLoad):
 
         return trained_word_count, raw_word_count, job_tally
 
+    def _train_epoch_context_iterable(self, context_iterable, cur_epoch=0, total_examples=None,
+                                      total_words=None, queue_factor=2, report_delay=1.0):
+        raise NotImplementedError()
+
     def _train_epoch(self, data_iterable, cur_epoch=0, total_examples=None, total_words=None,
                      queue_factor=2, report_delay=1.0):
         """Train the model for a single epoch.
@@ -492,7 +504,7 @@ class BaseAny2VecModel(utils.SaveLoad):
 
         return trained_word_count, raw_word_count, job_tally
 
-    def train(self, data_iterable=None, corpus_file=None, epochs=None, total_examples=None,
+    def train(self, data_iterable=None, corpus_file=None, context_iterable=None, epochs=None, total_examples=None,
               total_words=None, queue_factor=2, report_delay=1.0, callbacks=(), **kwargs):
         """Train the model for multiple epochs using multiple workers.
 
@@ -553,9 +565,15 @@ class BaseAny2VecModel(utils.SaveLoad):
                 trained_word_count_epoch, raw_word_count_epoch, job_tally_epoch = self._train_epoch(
                     data_iterable, cur_epoch=cur_epoch, total_examples=total_examples,
                     total_words=total_words, queue_factor=queue_factor, report_delay=report_delay)
-            else:
+            elif corpus_file is not None:
                 trained_word_count_epoch, raw_word_count_epoch, job_tally_epoch = self._train_epoch_corpusfile(
                     corpus_file, cur_epoch=cur_epoch, total_examples=total_examples, total_words=total_words, **kwargs)
+            elif context_iterable is not None:
+                trained_word_count, raw_word_count_epoch, job_tally_epoch = self._train_epoch_context_iterable(
+                    context_iterable, cur_epoch=cur_epoch, total_examples=total_examples, total_words=total_words,
+                    queue_factor=queue_factor, report_delay=report_delay)
+            else:
+                raise Exception('Must provide data_iterable, corpus_file, or context_iterable')
 
             trained_word_count += trained_word_count_epoch
             raw_word_count += raw_word_count_epoch
@@ -764,9 +782,9 @@ class BaseWordEmbeddingsModel(BaseAny2VecModel):
             self.build_vocab(sentences=sentences, corpus_file=corpus_file, context_iterable=context_iterable,
                              trim_rule=trim_rule)
             self.train(
-                sentences=sentences, corpus_file=corpus_file, total_examples=self.corpus_count,
-                total_words=self.corpus_total_words, epochs=self.epochs, start_alpha=self.alpha,
-                end_alpha=self.min_alpha, compute_loss=compute_loss)
+                sentences=sentences, corpus_file=corpus_file, context_iterable=context_iterable,
+                total_examples=self.corpus_count, total_words=self.corpus_total_words, epochs=self.epochs,
+                start_alpha=self.alpha, end_alpha=self.min_alpha, compute_loss=compute_loss)
         else:
             if trim_rule is not None:
                 logger.warning(
@@ -1031,7 +1049,7 @@ class BaseWordEmbeddingsModel(BaseAny2VecModel):
         )
         return report
 
-    def train(self, sentences=None, corpus_file=None, total_examples=None, total_words=None,
+    def train(self, sentences=None, corpus_file=None, context_iterable=None, total_examples=None, total_words=None,
               epochs=None, start_alpha=None, end_alpha=None, word_count=0,
               queue_factor=2, report_delay=1.0, compute_loss=False, callbacks=(), **kwargs):
         """Train the model. If the hyper-parameters are passed, they override the ones set in the constructor.
@@ -1083,10 +1101,10 @@ class BaseWordEmbeddingsModel(BaseAny2VecModel):
         self.compute_loss = compute_loss
         self.running_training_loss = 0.0
         return super(BaseWordEmbeddingsModel, self).train(
-            data_iterable=sentences, corpus_file=corpus_file, total_examples=total_examples,
-            total_words=total_words, epochs=epochs, start_alpha=start_alpha, end_alpha=end_alpha, word_count=word_count,
-            queue_factor=queue_factor, report_delay=report_delay, compute_loss=compute_loss, callbacks=callbacks,
-            **kwargs)
+            data_iterable=sentences, corpus_file=corpus_file, context_iterable=context_iterable,
+            total_examples=total_examples, total_words=total_words, epochs=epochs, start_alpha=start_alpha,
+            end_alpha=end_alpha, word_count=word_count, queue_factor=queue_factor, report_delay=report_delay,
+            compute_loss=compute_loss, callbacks=callbacks, **kwargs)
 
     def _get_job_params(self, cur_epoch):
         """Get the learning rate used in the current epoch.
